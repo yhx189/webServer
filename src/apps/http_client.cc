@@ -124,11 +124,11 @@ int main(int argc, char * argv[]) {
 
     fprintf(stdout, "debugging\n");
 
-    char * cut = buf;
-    while(cut[-1] != ' ')
-	    cut++;
+    char * head = buf;
+    while(head[-1] != ' ')
+	    head++;
     char tmp[4];
-    strncpy(tmp, cut, 3);
+    strncpy(tmp, head, 3);
     tmp[4] = '\0';
     rc = atoi(tmp);
 
