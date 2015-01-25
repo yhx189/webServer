@@ -79,7 +79,7 @@ int main(int argc, char * argv[]) {
 	exit(-1);
     }
     else{
-    	fprintf(stdout, "1 debugging\n");
+    	fprintf(stdout, "connected to minet!\n");
     }
     	   
     /* send request */
@@ -93,9 +93,9 @@ int main(int argc, char * argv[]) {
     }
 
     else{
-    	fprintf(stdout, "2 debugging\n");
+    	fprintf(stdout, "GET request sent!\n");
     }
-
+    //free(req);
 
     FD_ZERO(&set);
     FD_SET(sock, &set);
@@ -107,23 +107,22 @@ int main(int argc, char * argv[]) {
     //      minet_close(sock);
 //	  exit(-1);
   //  }
-    fprintf(stdout, "3 debugging\n");
  if (minet_select(sock+1, &set, 0, 0, 0) < 1){
     
    	   fprintf(stderr, "select!\n");
 	   minet_close(sock);
            exit(-1);
+    }else{
+ 	fprintf(stdout, "socket selected, start reading...\n");
     }
- fprintf(stdout, "debugging\n");
-
     /* first read loop -- read headers */
     if (minet_read(sock, buf, BUFSIZE) < 0){
        minet_perror("recv");
        exit(-1);
+    }else{
+    
+    	fprintf(stdout, "reading headers\n");
     }
-
-    fprintf(stdout, "debugging\n");
-
     char * head = buf;
     while(head[-1] != ' ')
 	    head++;
@@ -143,20 +142,19 @@ int main(int argc, char * argv[]) {
     /* print first part of response */
 
     /* second read loop -- print out the rest of the response */
-    fprintf(wheretoprint, "The status was %d.\n", rc);
     char *rsp = buf;
 
     while (!(rsp[0] == '\n' && rsp[-2] == '\n'))
-		    	    rsp++;
+		rsp++;
 
-	        free(req);
+    
     /*close socket and deinitialize */
 
 
     if (ok) {
 	 fprintf(wheretoprint, "%s", rsp);
   	 while ((datalen = minet_read(sock, buf, BUFSIZE)) > 0) {
-		buf[datalen] = '\0';
+		 buf[datalen] = '\0';
 		 fprintf(wheretoprint, "%s", buf);
 	 }
 	      

@@ -115,22 +115,26 @@ int handle_connection(int sock2)
 	exit(-1);
   }else{
   
-  	fprintf(stdout, "read from input")
+  	fprintf(stdout, "read from input\n");
   }
   /* parse request to get file name */
   /* Assumption: this is a GET request and filename contains no spaces*/
 
 
     /* try opening the file */
-  char *get = strtok(buf, "\r\n");
-  char *filename = strtok(NULL, "\r\n");
-  char *version = strtok(NULL, "\r\n");
-
+  char *get = strtok(buf, " \r\n");
+  fprintf(stdout, "%s\n", get);
+  char *fname = strtok(NULL, " \r\n");
+  fprintf(stdout, "%s\n", fname);
+  char *version = strtok(NULL, " \r\n");
+  fprintf(stdout, "%s\n", version);
   char path[FILENAMESIZE + 1];
   memset(path, 0, FILENAMESIZE + 1);
   getcwd(path, FILENAMESIZE);
-  strncpy(path + strlen(path), filename, strlen(filename));
-
+  strncpy(path+strlen(path), "/", 1 );
+  strncpy(path + strlen(path), fname, strlen(fname));
+ 
+  fprintf(stdout, "path = %s\n", path);
   char *data;
   if(stat(path, &filestat) < 0){
   	fprintf(stderr, "cannot get file\n");
