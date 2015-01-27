@@ -69,42 +69,187 @@ int main(int argc,char *argv[])
     fprintf(stderr,"INVALID PORT NUMBER: %d; can't be < 1500\n",server_port);
     exit(-1);
   }
+  
+  if(toupper(*(argv[1])) == 'K'){
+  	minet_init(MINET_KERNEL);
+  }else if(toupper(*(argv[1])) == 'U'){
+  	minet_init(MINET_USER);
+  }else{
+  	fprintf(stderr, "First argument should be k or u\n");
+	exit(-1);
+  }
 
   /* initialize and make socket */
-
+  sock = 0;
+  if((sock = minet_socket(SOCK_STREAM)) < 0){
+  	fprintf(stderr, "cannot create socket\n");
+	exit(-1);
+  }
   /* set server address*/
+  memset(&sa, 0, sizeof(sa));
+  sa.sin_family = AF_INET;
+  sa.sin_port = htons(server_port);
+  sa.sin_addr.s_addr = htonl(INADDR_ANY);
+
 
   /* bind listening socket */
-
+  if(minet_bind(sock, (sockaddr_in*)&sa) < 0){
+  	fprintf(stderr, "cannot bind socket\n");
+	minet_close(sock);
+	exit(-1);
+  }
   /* start listening */
 
+  if(minet_listen(sock, 10) < 0){
+  	fprintf(stderr, "cannot start listening\n");
+	minet_close(sock);
+	exit(-1);
+  }else{
+  	fprintf(stdout, "start listening...\n");
+  }
+
+  memset(&connections, 0, sizeof(connections));
+  i = (connection *)malloc(sizeof(connection));
+  init_connection(connections.first);
+  connections.first->state = NEW;
+  connections.first->sock = sock;
+  connections.first->next = NULL;
+
+  maxfd = sock;
   /* connection handling loop */
   while(1)
   {
     /* create read and write lists */
+	FD_ZERO(&readlist);
+	for (i = connections.first; i!=NULL; i = i->next){
+		if( (i->sock <= maxfd) ){
+			FD_SET(i->sock, &readlist);
+		}
+		if( (i->fd != 0) && (i->fd < maxfd))
+			FD_SET(i->fd, &readlist);
+		}
+	}
+	
+	FD_ZERO(&writelist);
+	for (i = connections.first; i!=NULL; i = i->next){
+		if( (i->sock <= maxfd) ){
+			FD_SET(i->sock, &writelist);
+		}
+	}
 
     /* do a select */
-
     /* process sockets that are ready */
-  }
+
+	if(minet_select(maxfd+1, &readlist, 0, 0, 0) < 1){
+		fprintf(stderr, "cannot select\n");
+		minet_close(sock);
+		exit(-1);
+	}else{
+		fprintf(stdout, "readlist select finished\n");
+		int j;
+		for(j = 0; j < maxfd; j++){
+			if(j == sock && FD_ISSET(j, &readlist) ){
+				memset(&sa2, 0, sizeof(sa2));
+				if((sock2 = minet_accept(j, &sa2)) <0){
+					fprintf(stderr, "cannot accept socket\n");
+					minet_close(j);
+					exit(-1);
+				}
+				fcntl(sock2, F_SETFL, O_NONBLOCK);
+				insert_connection(sock2, connections);
+				if(sock2 > maxfd)
+					maxfd = sock2;
+					
+			}
+			else if (FD_ISSET(j, &readlist)){
+				i->state = READING_HEADERS;
+				read_headers(i);
+			}
+		
+		}
+
+	}
+	if(minet_select(maxfd+1, &writelist, 0, 0, 0) < 1){
+		fprintf(stderr, "cannot select writelist\n");
+		minet_close(sock);
+		exit(-1);
+	}else{
+		fprintf(stdout, "writelist select, start to write file...\n");
+		int j;
+		for(j = 0; j < maxfd; j++){
+			if(FD_ISSET(j, &writelist)){
+				for(i = connections.first; i != NULL; i = i->next){
+					if(i->sock == j)
+						break;
+				}
+			
+				write_file(i);	
+				if(i->written == i->datalen){
+				// if you've written the whole file,
+				// remove i from connections
+				   connection *ret = (connection*)malloc(sizeof(connection));
+				   for(ret = connection.first; ret != NULL; ret = ret->next){
+				   if(ret->next == i)
+					   break;
+				   }
+				   ret -> next = i -> next;
+				
+				}
+				if(j == maxfd){
+					
+				}
+			}
+		}
+	}	
+
+    }
 }
 
 void read_headers(connection *con)
 {
   /* first read loop -- get request and headers*/
+  int sock2 = con->sock;
+  char buf[BUFSIZE+1];
+  struct stat filestat;
+  
 
+  if(minet_read(sock2, buf, BUFSIZE) < 0){
+  	fprintf(stderr, "cannot read on sock2\n");
+	minet_close(sock2);
+	exit(-1);
+  }
   /* parse request to get file name */
   /* Assumption: this is a GET request and filename contains no spaces*/
-  
+  char * get = strtok(buf, " \r\n");
+  char * fname = strtok(NULL, " \r\n");
+  char * version = strtok(NULL, " \r\n");
+
+  memset(con->filename, 0, FILENAMESIZE + 1);
+  getcwd(con->filename, FILENAMESIZE);
+  strncpy(con->filename + strlen(con->filename), "/", 1);
+  strncpy(con->filename + strlen(con->filename), fname, strlen(fname));
+
   /* get file name and size, set to non-blocking */
-    
+  char * data;
+  int fp;
+  
+  if(stat(con->filename, &filestat) < 0){
+  	con->ok = false;
+  }else{
+  	con->ok = true;
+	con->filelen = filestat.st_size;
+	fp = open(con->filename, O_RDONLY);
+	con->fd = fp;
+	fcntl(fp, F_SETFL, O_NONBLOCK );
+	write_response(con);
+  }
     /* get name */
     
     /* try opening the file */
       
 	/* set to non-blocking, get size */
   
-  write_response(con);
+	//write_response(con);
 }
 
 void write_response(connection *con)
@@ -125,9 +270,15 @@ void write_response(connection *con)
   if (con->ok)
   {
     /* send headers */
+	  writenbytes(sock2, ok_response, strlen(ok_response));
+
+//	  read_file(con);
   }
   else
   {
+	  writenbytes(sock2, notok_response, strlen(notok_response));
+	  minet_close(sock2);
+	  return;
   }  
 }
 
@@ -136,7 +287,7 @@ void read_file(connection *con)
   int rc;
 
     /* send file */
-  rc = read(con->fd,con->buf,BUFSIZE);
+  rc = readnbytes(con->fd,con->buf,BUFSIZE);
   if (rc < 0)
   { 
     if (errno == EAGAIN)
@@ -181,7 +332,7 @@ void write_file(connection *con)
       read_file(con);
     }
     else
-      printf("shouldn't happen\n");
+	    printf("shouldn't happen\n");
   }
 }
 
