@@ -105,104 +105,202 @@ int main(int argc,char *argv[])
 	minet_close(sock);
 	exit(-1);
   }else{
-  	fprintf(stdout, "start listening...\n");
+  //	fprintf(stdout, "start listening...\n");
   }
 
-  memset(&connections, 0, sizeof(connections));
-  i = (connection *)malloc(sizeof(connection));
-  init_connection(connections.first);
-  connections.first->state = NEW;
-  connections.first->sock = sock;
-  connections.first->next = NULL;
-
+  //memset(&connections, 0, sizeof(connections));
+  //i = (connection *)malloc(sizeof(connection));
+  //connections.first = (connection*)malloc(sizeof(connection));
+  //init_connection(connections.first);
+  //connections.first->state = NEW;
+  //connections.first->sock = sock;
+  //connections.first->next = NULL;
+  connections.first = NULL;
+  connections.last = NULL;
   maxfd = sock;
   /* connection handling loop */
   while(1)
   {
     /* create read and write lists */
 	FD_ZERO(&readlist);
-	for (i = connections.first; i!=NULL; i = i->next){
-		if( (i->sock <= maxfd) ){
-			FD_SET(i->sock, &readlist);
-		}
-		if( (i->fd != 0) && (i->fd < maxfd))
-			FD_SET(i->fd, &readlist);
-		}
-	}
-	
 	FD_ZERO(&writelist);
+	FD_SET(sock, &readlist);
 	for (i = connections.first; i!=NULL; i = i->next){
-		if( (i->sock <= maxfd) ){
+		if(i->state == CLOSED){
+			continue;
+		}else if ((i->state == NEW)||(i->state == READING_HEADERS)){
+		
+			FD_SET(i->sock, &readlist);
+			if(i->sock > maxfd)
+				maxfd = i->sock;
+		}else if(i->state == READING_FILE){
+			FD_SET(i->fd, &readlist);
+		}else if((i->state == WRITING_RESPONSE) ||(i->state == WRITING_FILE)){
 			FD_SET(i->sock, &writelist);
+			if(i->sock > maxfd)
+				maxfd = i->sock;
+		
 		}
 	}
+//		if( (i->sock <= maxfd) ){
+//			FD_SET(i->sock, &readlist);
+//			fprintf(stdout, "sock %d added to read list\n", i->sock);
+//		}
+//		if( (i->state == READING_FILE) ){
+//			FD_SET(i->fd, &readlist);
+//			fprintf(stdout, "fd %d added to read list\n", i->fd);
+//		}
+//	}
+
+//	FD_ZERO(&writelist);
+//	fprintf(stdout, "write list initiated, maxfd = %d\n", maxfd);
+//	for (i = connections.first; i!= NULL; i = i->next){
+//		fprintf(stdout, "i->sock = %d\n", i->sock);
+//		if( (i->sock <= maxfd) ){
+//			FD_SET(i->sock, &writelist);
+//			fprintf(stdout, "sock %d added to write list\n", i->sock);
+//		}
+//	}
 
     /* do a select */
     /* process sockets that are ready */
 
-	if(minet_select(maxfd+1, &readlist, 0, 0, 0) < 1){
+//	if(minet_select(maxfd+1, &readlist, &writelist, 0, 0) < 1){
+
+	rc = minet_select(maxfd+1, &readlist, &writelist, 0, 0);
+	while((rc < 0) && (errno == EINTR))
+		rc = minet_select(maxfd+1,&readlist, &writelist, 0, 0);
+	if(rc < 0){
 		fprintf(stderr, "cannot select\n");
 		minet_close(sock);
 		exit(-1);
-	}else{
-		fprintf(stdout, "readlist select finished\n");
+	}
+//	fprintf(stdout, "read select finished\n");
+	for(i=connections.first; i!=NULL; i = i->next){
+		if(i->state == CLOSED)
+			continue;
+		if(i->state == NEW){
+			init_connection(i);
+			i->state = READING_HEADERS;
+			read_headers(i);
+		} else if((i->state == READING_HEADERS) &&(FD_ISSET(i->sock, &readlist)))
+		{
+			read_headers(i);
+		}else if(i->state == WRITING_RESPONSE && FD_ISSET(i->sock,&writelist)){
+		write_response(i);
+		}else if(i->state == READING_FILE && FD_ISSET(i->fd,&readlist)){
+		
+			read_file(i);
+		}else if(i->state == WRITING_FILE && FD_ISSET(i->sock,&writelist)){
+			write_file(i);
+		}
+
+
+
+	}
+	if(FD_ISSET(sock, &readlist)){
+		sock2=minet_accept(sock,&sa2);
+		if(sock2<0){
+			fprintf(stderr, "cannot accept socket\n");
+			minet_close(sock2);
+			exit(-1);
+		}
+		insert_connection(sock2, &connections);
+		fcntl(sock2, F_SETFL, O_NONBLOCK);
+	}
+	}
+
+/****************
 		int j;
-		for(j = 0; j < maxfd; j++){
+		for(j = 0; j <= maxfd; j++){
 			if(j == sock && FD_ISSET(j, &readlist) ){
+			
 				memset(&sa2, 0, sizeof(sa2));
 				if((sock2 = minet_accept(j, &sa2)) <0){
 					fprintf(stderr, "cannot accept socket\n");
 					minet_close(j);
 					exit(-1);
 				}
+				fprintf(stdout, "socket accepted!\n");
 				fcntl(sock2, F_SETFL, O_NONBLOCK);
-				insert_connection(sock2, connections);
+				insert_connection(sock2, &connections);
+		//		fprintf(stdout, "sock2 = %d\n",sock2);
 				if(sock2 > maxfd)
 					maxfd = sock2;
-					
 			}
 			else if (FD_ISSET(j, &readlist)){
-				i->state = READING_HEADERS;
-				read_headers(i);
+				for(i=connections.first; i!= NULL; i=i->next){
+					if(i->sock == j){
+						i->state = READING_HEADERS;
+						fprintf(stdout, "start reading headers...\n");
+						read_headers(i);
+						break;
+					}
+					
+				}	
+				for(i=connections.first; i!= NULL; i=i->next){
+					if(i->fd == j){
+						i->state = READING_FILE;
+						fprintf(stdout, "start reading file...\n");
+						read_file(i);
+						break;
+					}
+					
+				}
+
 			}
 		
-		}
+//		}
 
-	}
-	if(minet_select(maxfd+1, &writelist, 0, 0, 0) < 1){
-		fprintf(stderr, "cannot select writelist\n");
-		minet_close(sock);
-		exit(-1);
-	}else{
-		fprintf(stdout, "writelist select, start to write file...\n");
-		int j;
-		for(j = 0; j < maxfd; j++){
+//	}
+
+//	if(minet_select(maxfd+1, 0, &writelist, 0, 0) < 1){
+//		fprintf(stderr, "cannot select writelist\n");
+//		minet_close(sock);
+//		exit(-1);
+//	}else{
+//	fprintf(stdout, "writelist select finished, start writing file...\n");
+
+//		int j;
+//		for(j = 0; j <= maxfd; j++){
 			if(FD_ISSET(j, &writelist)){
 				for(i = connections.first; i != NULL; i = i->next){
 					if(i->sock == j)
 						break;
 				}
 			
-				write_file(i);	
-				if(i->written == i->datalen){
-				// if you've written the whole file,
-				// remove i from connections
-				   connection *ret = (connection*)malloc(sizeof(connection));
-				   for(ret = connection.first; ret != NULL; ret = ret->next){
-				   if(ret->next == i)
-					   break;
-				   }
-				   ret -> next = i -> next;
+			if(i->state == CLOSED)
+				FD_CLR(i->fd, &readlist);
+			write_file(i);
+			//FD_CLR(j, & writelist);
+			if(i->file_written == i->filelen){
+			// if you've written the whole file
+			// remove i from connections
+				connection * ret = (connection*)malloc(sizeof(connection));
+				for(ret=connections.first;ret!=NULL;ret=ret->next){
+					if(ret->next == i)
+						break;
+				}
+				ret->next = i->next;
+				FD_CLR(j, &writelist);
+				if(j == maxfd){
+					int k;
+					for (k=j-1;k>=0;k--){
+						if(FD_ISSET(k, &writelist))
+						{
+							maxfd = k;
+							break;
+						}
+					}
 				
 				}
-				if(j == maxfd){
-					
-				}
+			}
 			}
 		}
 	}	
 
     }
+*****************/
 }
 
 void read_headers(connection *con)
@@ -241,6 +339,7 @@ void read_headers(connection *con)
 	fp = open(con->filename, O_RDONLY);
 	con->fd = fp;
 	fcntl(fp, F_SETFL, O_NONBLOCK );
+	con->state = WRITING_RESPONSE;
 	write_response(con);
   }
     /* get name */
@@ -270,9 +369,15 @@ void write_response(connection *con)
   if (con->ok)
   {
     /* send headers */
-	  writenbytes(sock2, ok_response, strlen(ok_response));
+	  sprintf(ok_response, ok_response_f, con->filelen);
+	  rc = writenbytes(sock2, ok_response + written, strlen(ok_response) - written);
+          if(rc < 0)
+		  fprintf(stderr, "cannot write response\n");
 
-//	  read_file(con);
+	  con->state = WRITING_RESPONSE;
+//	  fprintf(stdout, "writing response on sock %d\n", sock2);
+	  con->state = READING_FILE;
+	  read_file(con);
   }
   else
   {
@@ -287,7 +392,10 @@ void read_file(connection *con)
   int rc;
 
     /* send file */
-  rc = readnbytes(con->fd,con->buf,BUFSIZE);
+  con->state = READING_FILE;
+  //  rc = readnbytes(con->fd,con->buf,BUFSIZE);
+
+  rc = read(con->fd,con->buf,BUFSIZE);
   if (rc < 0)
   { 
     if (errno == EAGAIN)
@@ -298,6 +406,7 @@ void read_file(connection *con)
   else if (rc == 0)
   {
     con->state = CLOSED;
+    close(con->fd);
     minet_close(con->sock);
   }
   else
@@ -312,7 +421,8 @@ void write_file(connection *con)
 {
   int towrite = con->file_read;
   int written = con->file_written;
-  int rc = writenbytes(con->sock, con->buf+written, towrite-written);
+  int rc = writenbytes(con->sock,  con->buf+written, towrite-written);
+//  fprintf(stdout, "the buf is %s\n", con->buf+written);
   if (rc < 0)
   {
     if (errno == EAGAIN)
@@ -392,13 +502,19 @@ void add_connection(int sock,connection_list *con_list)
   con->sock = sock;
   if (con_list->first == NULL)
     con_list->first = con;
+  
   if (con_list->last != NULL)
   {
     con_list->last->next = con;
     con_list->last = con;
+  //  fprintf(stdout, "sock %d added to connections\n", sock);
   }
   else
-    con_list->last = con;
+  {	
+//	  fprintf(stdout, "first sock %d added to connections\n", sock);
+//          con_list->first->next = con;	  
+	  con_list->last = con;
+  }
 }
 
 void init_connection(connection *con)
